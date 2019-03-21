@@ -36,12 +36,17 @@
 
 set -o pipefail
 
+KPATCH_ROOT=/data/kpatch_build_root
+mkdir -p $KPATCH_ROOT/cache
+mkdir -p $KPATCH_ROOT/kernel
+KERN_ROOT=$KPATCH_ROOT/kernel
 BASE="$PWD"
 SCRIPTDIR="$(readlink -f "$(dirname "$(type -p "$0")")")"
 ARCH="$(uname -m)"
 CPUS="$(getconf _NPROCESSORS_ONLN)"
-CACHEDIR="${CACHEDIR:-$HOME/.kpatch}"
-SRCDIR="$CACHEDIR/src"
+#CACHEDIR="${CACHEDIR:-$HOME/.kpatch}"
+CACHEDIR=$KPATCH_ROOT/cache
+#SRCDIR="$CACHEDIR/src"
 RPMTOPDIR="$CACHEDIR/buildroot"
 VERSIONFILE="$CACHEDIR/version"
 TEMPDIR="$CACHEDIR/tmp"
@@ -53,6 +58,10 @@ ARCH_KCFLAGS=""
 declare -a PATCH_LIST
 APPLIED_PATCHES=0
 OOT_MODULE=
+GIT_PATH=
+KERN_TAG=
+
+echo "CPUS $CPUS"
 
 warn() {
 	echo "ERROR: $1" >&2
@@ -391,9 +400,10 @@ usage() {
 	echo "		-c, --config       Specify kernel config file" >&2
 	echo "		-v, --vmlinux      Specify original vmlinux" >&2
 	echo "		-j, --jobs         Specify the number of make jobs" >&2
-	echo "		-t, --target       Specify custom kernel build targets" >&2
+	echo "		-t, --tag       Specify custom kernel build targets" >&2
 	echo "		-n, --name         Specify the name of the kpatch module" >&2
 	echo "		-o, --output       Specify output folder" >&2
+	echo "		-g, --git_path     Specify kernel git repository" >&2
 	echo "		-d, --debug        Enable 'xtrace' and keep scratch files" >&2
 	echo "		                   in <CACHEDIR>/tmp" >&2
 	echo "		                   (can be specified multiple times)" >&2
@@ -404,7 +414,7 @@ usage() {
 	echo "		                   (not recommended)" >&2
 }
 
-options="$(getopt -o ha:r:s:c:v:j:t:n:o:de: -l "help,archversion:,sourcerpm:,sourcedir:,config:,vmlinux:,jobs:,target:,name:,output:,oot-module:,debug,skip-gcc-check,skip-cleanup" -- "$@")" || die "getopt failed"
+options="$(getopt -o ha:g:r:s:c:v:j:t:n:o:de: -l "help,archversion:,sourcerpm:,sourcedir:,config:,vmlinux:,jobs:,target:,name:,output:,oot-module:,debug,skip-gcc-check,skip-cleanup" -- "$@")" || die "getopt failed"
 
 eval set -- "$options"
 
@@ -443,8 +453,8 @@ while [[ $# -gt 0 ]]; do
 		CPUS="$2"
 		shift
 		;;
-	-t|--target)
-		TARGETS="$TARGETS $2"
+	-t|--tag)
+		KERN_TAG=$2
 		shift
 		;;
 	-n|--name)
@@ -465,6 +475,14 @@ while [[ $# -gt 0 ]]; do
 	-e|--oot-module)
 		[[ ! -f "$2" ]] && die "out-of-tree module '$2' not found"
 		OOT_MODULE="$(readlink -f "$2")"
+		shift
+		;;
+	-g|--git_path)
+		GIT_PATH=$2
+		if [ ! -d $GIT_PATH ]; then
+			echo "git repository $GIT_PATH not exist"
+			exit 1
+		fi
 		shift
 		;;
 	--skip-cleanup)
@@ -518,6 +536,7 @@ fi
 mkdir -p "$TEMPDIR" || die "Couldn't create $TEMPDIR"
 rm -rf "${TEMPDIR:?}"/*
 rm -f "$LOGFILE"
+SRCDIR=$GIT_PATH
 
 if [[ -n "$USERSRCDIR" ]]; then
 	if [[ -n "$ARCHVERSION" ]]; then
@@ -572,6 +591,8 @@ elif [[ "$DISTRO" = ubuntu ]] || [[ "$DISTRO" = debian ]]; then
 
 	export PATH="/usr/lib/ccache:$PATH"
 fi
+
+VMLINUX=$KERN_ROOT/boot/vmlinux-$KERN_TAG
 
 find_dirs || die "can't find supporting tools"
 
@@ -672,13 +693,21 @@ else
 		echo "$ARCHVERSION" > "$VERSIONFILE" || die
 
 	else
-		die "Unsupported distribution"
+		echo  "build on tlinux"
 	fi
 fi
 
+pushd .
+cd $GIT_PATH
+git clean -dfx
+git checkout $KERN_TAG --force
+
+CONFIGFILE=$GIT_PATH/package/default/config.default
+
 [[ -z "$CONFIGFILE" ]] && CONFIGFILE="$SRCDIR"/.config
 [[ ! -e "$CONFIGFILE" ]] && die "can't find config file"
-[[ ! "$CONFIGFILE" -ef "$SRCDIR"/.config ]] && cp -f "$CONFIGFILE" "$SRCDIR/.config"
+#[[ ! "$CONFIGFILE" -ef "$SRCDIR"/.config ]] && cp -f "$CONFIGFILE" "$SRCDIR/.config"
+
 
 # Build variables - Set some defaults, then adjust features
 # according to .config and kernel version
@@ -722,6 +751,7 @@ grep -q "CONFIG_GCC_PLUGIN_RANDSTRUCT=y" "$CONFIGFILE" && die "kernel option 'CO
 
 echo "Testing patch file(s)"
 cd "$SRCDIR" || die
+cp package/default/config.default .config
 apply_patches
 remove_patches
 
@@ -799,7 +829,7 @@ if [[ -z "$MODNAME" ]] ; then
 	if "$KPATCH_MODULE"; then
 		MODNAME="kpatch-$MODNAME"
 	else
-		MODNAME="livepatch-$MODNAME"
+		MODNAME="tklp-$MODNAME"
 	fi
 
 	MODNAME="$(module_name_string "$MODNAME")"
@@ -917,6 +947,7 @@ if [[ -z "$OOT_MODULE" ]]; then
 else
 	KPATCH_BUILD="/lib/modules/$ARCHVERSION/build"
 fi
+KPATCH_BUILD=$KERN_ROOT/usr/src/kernels/$KERN_TAG
 KPATCH_BUILD="$KPATCH_BUILD" KPATCH_NAME="$MODNAME" \
 KBUILD_EXTRA_SYMBOLS="$KBUILD_EXTRA_SYMBOLS" \
 KPATCH_LDFLAGS="$KPATCH_LDFLAGS" \
