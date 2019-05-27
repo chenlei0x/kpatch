@@ -4,13 +4,13 @@ KERNELRELEASE := $(lastword $(subst /, , $(dir $(patsubst %/,%,$(KPATCH_BUILD)))
 THISDIR := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
 
 ifeq ($(wildcard $(KPATCH_BUILD)),)
-$(error $(KPATCH_BUILD) doesn\'t exist.  Try installing the kernel-devel-$(KERNELRELEASE) RPM or linux-headers-$(KERNELRELEASE) DEB.)
+$(error $(KPATCH_BUILD) doesn\'t exist.)
 endif
 
 KPATCH_MAKE = $(MAKE) -C $(KPATCH_BUILD) M=$(THISDIR)
 
 kpatch.ko: core.c
-	$(KPATCH_MAKE) kpatch.ko
+	$(KPATCH_MAKE) modules
 
 all: kpatch.ko
 
@@ -20,5 +20,12 @@ clean:
 
 
 # kbuild rules
-obj-m := kpatch.o
+obj-m += kpatch.o
 kpatch-y := core.o shadow.o
+
+all: clean
+	$(MAKE) -C $(KPATCH_BUILD) M=$(shell pwd) modules
+
+clean:
+	$(MAKE) -C $(KPATCH_BUILD) M=$(shell pwd) clean
+
