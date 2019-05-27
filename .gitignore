@@ -1,0 +1,17 @@
+cscope*
+kmod/**/*.*.cmd
+kmod/**/*.mod.c
+kmod/**/modules.order
+kmod/**/Module.symvers
+**/*.d
+**/*.o
+**/*.ko
+man/kpatch-build.1.gz
+man/kpatch.1.gz
+kmod/patch/kpatch.lds
+kmod/core/.tmp_versions/
+kpatch-build/build_hotpatch.sh
+kpatch-build/create-diff-object
+kpatch-build/create-klp-module
+kpatch-build/create-kpatch-module
+/tags
