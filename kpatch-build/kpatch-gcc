@@ -44,6 +44,7 @@ if [[ "$TOOLCHAINCMD" = "gcc" ]] ; then
 				arch/powerpc/kernel/prom_init.o|\
 				lib/*|\
 				.*.o|\
+				*/.*.o|\
 				*/.lib_exports.o)
 					break
 					;;
