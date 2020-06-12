@@ -277,19 +277,44 @@ static void symtab_read(struct lookup_table *table, char *path)
 	fclose(file);
 }
 
+/*
+ * The Module.symvers file format is one of the following, depending on kernel
+ * version:
+ *
+ * <CRC>	<Symbol>	<Module>	<Export Type>
+ * <CRC>	<Symbol>	<Namespace>	<Module>	<Export Type>
+ * <CRC>	<Symbol>	<Module>	<Export Type>	<Namespace>
+ *
+ * All we care about is Symbol and Module.  Since the format is unpredictable,
+ * we have to dynamically determine which column is Module by looking for
+ * "vmlinux".
+ */
 static void symvers_read(struct lookup_table *table, char *path)
 {
 	FILE *file;
-	unsigned int crc, i = 0;
-	char name[256], mod[256], export[256];
-	char *objname, *symname;
+	int i, column, mod_column = 0;
+	char line[4096];
+	char *tmp, *objname, *symname;
 
 	if ((file = fopen(path, "r")) == NULL)
 		ERROR("fopen");
 
-	while (fscanf(file, "%x %s %s %s\n",
-		      &crc, name, mod, export) != EOF)
+	while (fgets(line, 4096, file)) {
 		table->exp_nr++;
+
+		if (mod_column)
+			continue;
+
+		/* Find the module column */
+		for (column = 1, tmp = line; (tmp = strchr(tmp, '\t')); column++) {
+			tmp++;
+			if (*tmp && !strncmp(tmp, "vmlinux", 7))
+				mod_column = column;
+		}
+	}
+
+	if (table->exp_nr && !mod_column)
+		ERROR("Module.symvers: invalid format");
 
 	table->exp_syms = malloc(table->exp_nr * sizeof(*table->exp_syms));
 	if (!table->exp_syms)
@@ -298,22 +323,28 @@ static void symvers_read(struct lookup_table *table, char *path)
 	       table->exp_nr * sizeof(*table->exp_syms));
 
 	rewind(file);
+	for (i = 0; fgets(line, 4096, file); i++) {
+		char *name = NULL, *mod = NULL;
 
-	while (fscanf(file, "%x %s %s %s\n",
-		      &crc, name, mod, export) != EOF) {
+		for (column = 1, tmp = line; (tmp = strchr(tmp, '\t')); column++) {
+			*tmp++ = '\0';
+			if (*tmp && column == 1)
+				name = tmp;
+			else if (*tmp && column == mod_column)
+				mod = tmp;
+		}
+
+		if (!name || !mod)
+			continue;
+
 		symname = strdup(name);
 		if (!symname)
 			perror("strdup");
 
-		objname = strdup(mod);
-		if (!objname)
-			perror("strdup");
-		/* Modifies objname in-place */
-		objname = make_modname(objname);
+		objname = make_modname(mod);
 
 		table->exp_syms[i].name = symname;
 		table->exp_syms[i].objname = objname;
-		i++;
 	}
 
 	fclose(file);
