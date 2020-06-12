@@ -735,6 +735,10 @@ for i in $FILES; do
 
 		# create-diff-object orig.o patched.o parent-name parent-symtab
 		#		     Module.symvers patch-mod-name output.o
+               echo ALT_STRUCT_SIZE=$ALT_STRUCT_SIZE FIXUP_STRUCT_SIZE=$FIXUP_STRUCT_SIZE BUG_STRUCT_SIZE=$BUG_STRUCT_SIZE \
+                       EX_STRUCT_SIZE=$EX_STRUCT_SIZE "$TOOLSDIR"/create-diff-object "orig/$i" "patched/$i" "$KOBJFILE_NAME" \
+                       "$SYMTAB" "$SYMVERS_FILE" "${MODNAME//-/_}" \
+                       "output/$i" | logger 0
 		"$TOOLSDIR"/create-diff-object "orig/$i" "patched/$i" "$KOBJFILE_NAME" \
 			"$SYMTAB" "$SYMVERS_FILE" "${MODNAME//-/_}" \
 			"output/$i" 2>&1 | logger 0
