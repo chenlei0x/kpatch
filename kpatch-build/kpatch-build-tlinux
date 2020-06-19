@@ -47,6 +47,7 @@ RPMTOPDIR="$CACHEDIR/buildroot"
 VERSIONFILE="$CACHEDIR/version"
 TEMPDIR="$CACHEDIR/tmp"
 LOGFILE="$CACHEDIR/build.log"
+RPMTEMPDIR="$CACHEDIR/rpm_tmp"
 DEBUG=0
 SKIPCLEANUP=1
 SKIPGCCCHECK=0
@@ -391,6 +392,7 @@ usage() {
 	echo "		-h, --help         Show this help message" >&2
 	echo "		-c, --config       Specify kernel config file" >&2
 	echo "		-v, --vmlinux      Specify original vmlinux" >&2
+	echo "		--debuginfo        Specify original debuginfo" >&2
 	echo "		-j, --jobs         Specify the number of make jobs" >&2
 	echo "		-t, --tag          Specify custom kernel build targets" >&2
 	echo "		-g, --git_path     Specify kernel git repository" >&2
@@ -410,7 +412,7 @@ usage() {
 	echo "		                   (not recommended)" >&2
 }
 
-options="$(getopt -o ha:g:r:s:c:v:j:t:n:o:de: -l "help,archversion:,sourcerpm:,sourcedir:,config:,vmlinux:,jobs:,target:,name:,output:,oot-module:,debug,skip-gcc-check,skip-cleanup" -- "$@")" || die "getopt failed"
+options="$(getopt -o ha:g:r:s:c:v:j:t:n:o:de: -l "help,archversion:,sourcerpm:,sourcedir:,config:,vmlinux:,jobs:,target:,name:,output:,oot-module:,debug,skip-gcc-check,skip-cleanup,debuginfo:" -- "$@")" || die "getopt failed"
 
 eval set -- "$options"
 
@@ -423,6 +425,11 @@ while [[ $# -gt 0 ]]; do
 	-c|--config)
 		[[ ! -f "$2" ]] && die "config file '$2' not found"
 		CONFIGFILE="$(readlink -f "$2")"
+		shift
+		;;
+	--debuginfo)
+		[[ ! -f "$2" ]] && die "debuginfo rpm'$2' not found"
+		DEBUGINFO_PKG="$(readlink -f "$2")"
 		shift
 		;;
 	-v|--vmlinux)
@@ -504,11 +511,6 @@ if [[ $DEBUG -eq 1 ]] || [[ $DEBUG -ge 3 ]]; then
 	set -o xtrace
 fi
 
-if [[ -n "$KERN_TAG" ]] && [[ -n "$VMLINUX" ]]; then
-	die "--tag is incompatible with --vmlinux"
-fi
-
-
 if [[ -n "$OOT_MODULE" ]] &&  [[ -z "$USERSRCDIR" ]]; then
 	warn "--oot-module requires --sourcedir"
 	exit 1
@@ -546,7 +548,21 @@ if [[ ! "$DISTRO" = tlinux ]]; then
 	die "This is not a tlinux distro"
 fi
 
-[[ -z "$VMLINUX" ]] && VMLINUX=/boot/vmlinux-$KERN_TAG
+if [[ -z "$VMLINUX" ]]; then
+	if [[ -e /boot/vmlinux-$KERN_TAG ]]; then
+		VMLINUX=/boot/vmlinux-$KERN_TAG 
+	elif [[ -e $DEBUGINFO_PKG ]]; then
+		rpm_name=${DEBUGINFO_PKG%.rpm}
+		rpm_name=${rpm_name##*/}
+		rpm_extract_dir="$RPMTEMPDIR/$rpm_name" 
+		mkdir -p $rpm_extract_dir || die "Couldn't create $rpm_extract_dir"
+		echo "Extracting debuginfo into $rpm_extract_dir"
+		rpm2cpio $DEBUGINFO_PKG | (cd $rpm_extract_dir; cpio -idm --quiet)
+		VMLINUX=$rpm_extract_dir/boot/vmlinux-$KERN_TAG
+	fi
+
+fi
+[[ ! -e "$VMLINUX" ]] && die "can't find vmlinux"
 find_dirs || die "can't find supporting tools"
 
 if [[ "$SKIPGCCCHECK" -eq 0 ]]; then
