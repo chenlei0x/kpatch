@@ -223,6 +223,12 @@ gcc_version_check() {
 	return
 }
 
+gcc_version_check_tlinux() {
+	gcc_major_ver=$(gcc --version | head -n 1 | cut -d' ' -f 3 | cut -d'.' -f1)	
+	if (( gcc_major_ver < 8 )); then
+		die "gcc 8 or higher is needed"
+	fi
+}
 find_special_section_data_ppc64le() {
 	SPECIAL_VARS="$(readelf -wi "$VMLINUX" |
 		gawk --non-decimal-data '
@@ -500,6 +506,8 @@ while [[ $# -gt 0 ]]; do
 	esac
 	shift
 done
+
+gcc_version_check_tlinux
 
 if [[ ${#PATCH_LIST[@]} -eq 0 ]]; then
 	warn "no patch file(s) specified"
