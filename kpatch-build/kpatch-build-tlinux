@@ -575,7 +575,6 @@ fi
 
 # Build variables - Set some defaults, then adjust features
 # according to .config and kernel version
-KBUILD_EXTRA_SYMBOLS=""
 KPATCH_LDFLAGS=""
 KPATCH_MODULE=true
 
@@ -590,10 +589,6 @@ if grep -q "CONFIG_LIVEPATCH=y" "$CONFIGFILE"; then
 			KPATCH_LDFLAGS="--unique=.parainstructions --unique=.altinstructions"
 		fi
 	fi
-else
-	# No support for livepatch in the kernel. Kpatch core module is needed.
-	find_core_symvers || die "unable to find Module.symvers for kpatch core module"
-	KBUILD_EXTRA_SYMBOLS="$SYMVERSFILE"
 fi
 
 # optional kernel configs:
@@ -811,12 +806,10 @@ else
 fi
 
 echo KPATCH_BUILD="$KPATCH_BUILD" KPATCH_NAME="$MODNAME" \
-KBUILD_EXTRA_SYMBOLS="$KBUILD_EXTRA_SYMBOLS" \
 KPATCH_LDFLAGS="$KPATCH_LDFLAGS" \
 	make | logger 0
 
 KPATCH_BUILD="$KPATCH_BUILD" KPATCH_NAME="$MODNAME" \
-KBUILD_EXTRA_SYMBOLS="$KBUILD_EXTRA_SYMBOLS" \
 KPATCH_LDFLAGS="$KPATCH_LDFLAGS" \
 	make 2>&1 | logger || die
 
