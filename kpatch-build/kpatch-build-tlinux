@@ -47,7 +47,6 @@ RPMTOPDIR="$CACHEDIR/buildroot"
 VERSIONFILE="$CACHEDIR/version"
 TEMPDIR="$CACHEDIR/tmp"
 LOGFILE="$CACHEDIR/build.log"
-RPMTEMPDIR="$CACHEDIR/rpm_tmp"
 DEBUG=0
 SKIPCLEANUP=1
 SKIPGCCCHECK=0
@@ -394,31 +393,31 @@ module_name_string() {
 
 usage() {
 	echo "usage: $(basename "$0") [options] <patch1 ... patchN>" >&2
-	echo "		patchN             Input patchfile(s)" >&2
-	echo "		-h, --help         Show this help message" >&2
-	echo "		-c, --config       Specify kernel config file" >&2
-	echo "		-v, --vmlinux      Specify original vmlinux" >&2
-	echo "		--debuginfo        Specify original debuginfo" >&2
-	echo "		-j, --jobs         Specify the number of make jobs" >&2
-	echo "		-t, --tag          Specify custom kernel build targets" >&2
-	echo "		-g, --git_path     Specify kernel git repository" >&2
-	echo "		-n, --name         Specify the name of the kpatch module" >&2
-	echo "		-o, --output       Specify output folder" >&2
+	echo "		patchN                        Input patchfile(s)" >&2
+	echo "		-h, --help                    Show this help message" >&2
+	echo "		-c, --config                  Specify kernel config file" >&2
+	echo "		-v, --vmlinux                 Specify original vmlinux" >&2
+	echo "		--debuginfo-devel-root        Specify original debuginfo" >&2
+	echo "		-j, --jobs                    Specify the number of make jobs" >&2
+	echo "		-t, --tag                     Specify custom kernel build targets" >&2
+	echo "		-g, --git_path                Specify kernel git repository" >&2
+	echo "		-n, --name                    Specify the name of the kpatch module" >&2
+	echo "		-o, --output                  Specify output folder" >&2
 
-	echo "		-e, --oot-module   Enable patching out-of-tree module," >&2
-	echo "          -t, --target       Specify custom kernel build targets" >&2
-	echo "          -s, --sourcedir    Specify kernel source directory" >&2
+	echo "		-e, --oot-module              Enable patching out-of-tree module," >&2
+	echo "          -t, --target                  Specify custom kernel build targets" >&2
+	echo "          -s, --sourcedir               Specify kernel source directory" >&2
 
-	echo "		-d, --debug        Enable 'xtrace' and keep scratch files" >&2
-	echo "		                   in <CACHEDIR>/tmp" >&2
-	echo "		                   (can be specified multiple times)" >&2
-	echo "		                   specify current version of module" >&2
-	echo "		--skip-cleanup     Skip post-build cleanup" >&2
-	echo "		--skip-gcc-check   Skip gcc version matching check" >&2
-	echo "		                   (not recommended)" >&2
+	echo "		-d, --debug                   Enable 'xtrace' and keep scratch files" >&2
+	echo "		                              in <CACHEDIR>/tmp" >&2
+	echo "		                              (can be specified multiple times)" >&2
+	echo "		                              specify current version of module" >&2
+	echo "		--skip-cleanup                Skip post-build cleanup" >&2
+	echo "		--skip-gcc-check              Skip gcc version matching check" >&2
+	echo "		                              (not recommended)" >&2
 }
 
-options="$(getopt -o ha:g:r:s:c:v:j:t:n:o:de: -l "help,archversion:,sourcerpm:,sourcedir:,config:,vmlinux:,jobs:,target:,name:,output:,oot-module:,debug,skip-gcc-check,skip-cleanup,debuginfo:" -- "$@")" || die "getopt failed"
+options="$(getopt -o ha:g:r:s:c:v:j:t:n:o:de: -l "help,archversion:,sourcerpm:,sourcedir:,config:,vmlinux:,jobs:,target:,name:,output:,oot-module:,debug,skip-gcc-check,skip-cleanup,debuginfo-devel-root:" -- "$@")" || die "getopt failed"
 
 eval set -- "$options"
 
@@ -433,9 +432,9 @@ while [[ $# -gt 0 ]]; do
 		CONFIGFILE="$(readlink -f "$2")"
 		shift
 		;;
-	--debuginfo)
-		[[ ! -f "$2" ]] && die "debuginfo rpm'$2' not found"
-		DEBUGINFO_PKG="$(readlink -f "$2")"
+	--debuginfo-devel-root)
+		[[ ! -e "$2" ]] && die "debuginfo devel root '$2' not found"
+		DEBUGINFO_DEVEL_ROOT="$(readlink -f "$2")"
 		shift
 		;;
 	-v|--vmlinux)
@@ -528,8 +527,8 @@ if [[ -n "$OOT_MODULE" ]] && [[ -n $KERN_TAG ]]; then
 	die "out of tree module DOES NOT require a kernel tag"
 fi
 
-if [[ -n "$VMLINUX" ]] && [[ -n $DEBUGINFO_PKG ]]; then
-	die "--vmlinux conflicts witch --debuginfo"
+if [[ -n "$VMLINUX" ]] && [[ -n $DEBUGINFO_DEVEL_ROOT ]]; then
+	die "--vmlinux conflicts with --debuginfo-devel-root"
 fi
 
 # ensure cachedir and tempdir are setup properly and cleaned
@@ -563,14 +562,8 @@ fi
 if [[ -z "$VMLINUX" ]]; then
 	if [[ -e /boot/vmlinux-$KERN_TAG ]]; then
 		VMLINUX=/boot/vmlinux-$KERN_TAG 
-	elif [[ -e $DEBUGINFO_PKG ]]; then
-		rpm_name=${DEBUGINFO_PKG%.rpm}
-		rpm_name=${rpm_name##*/}
-		rpm_extract_dir="$RPMTEMPDIR/$rpm_name" 
-		mkdir -p $rpm_extract_dir || die "Couldn't create $rpm_extract_dir"
-		echo "Extracting debuginfo into $rpm_extract_dir"
-		rpm2cpio $DEBUGINFO_PKG | (cd $rpm_extract_dir; cpio -idm --quiet)
-		VMLINUX=$rpm_extract_dir/boot/vmlinux-$KERN_TAG
+	elif [[ -e $DEBUGINFO_DEVEL_ROOT ]]; then
+		VMLINUX=$DEBUGINFO_DEVEL_ROOT/boot/vmlinux-$KERN_TAG
 	fi
 
 fi
@@ -827,13 +820,9 @@ fi
 
 cd "$TEMPDIR/patch" || die
 
-if [[ -z "$OOT_MODULE" ]]; then
-	KPATCH_BUILD="$SRCDIR"
-else
-	KPATCH_BUILD="/lib/modules/$KERN_TAG/build"
-fi
+KPATCH_BUILD="$DEBUGINFO_DEVEL_ROOT/usr/src/kernels/$KERN_TAG/"
 
-echo KPATCH_BUILD="$KPATCH_BUILD" KPATCH_NAME="$MODNAME" \
+echo KCPPFLAGS=$KCPPFLAGS KPATCH_BUILD="$KPATCH_BUILD" KPATCH_NAME="$MODNAME" \
 KPATCH_LDFLAGS="$KPATCH_LDFLAGS" \
 	make | logger 0
 
