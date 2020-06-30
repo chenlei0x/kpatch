@@ -669,9 +669,20 @@ static void kpatch_compare_sections(struct list_head *seclist)
 		}
 	}
 
+	/*
+	 * 上面通过kpatch_compare_correlated_section函数比对了每个section,
+	 * 现在通过section的status来推断symbol
+	 */
 	/* sync symbol status */
 	list_for_each_entry(sec, seclist, list) {
 		if (is_rela_section(sec)) {
+			/*
+			 * rela段变了,那么其对应的函数 肯定也要变
+			 * 举例:
+			 * sec = .rela.text.A
+			 * sec->base 为 .text.A
+			 * sec->base->sym 为 A
+		     */
 			if (sec->base->sym && sec->base->sym->status != CHANGED)
 				sec->base->sym->status = sec->status;
 		} else {
@@ -680,6 +691,7 @@ static void kpatch_compare_sections(struct list_head *seclist)
 			if (sym && sym->status != CHANGED)
 				sym->status = sec->status;
 
+			/*child为unlikely代码流程*/
 			if (sym && sym->child && sym->status == SAME &&
 			    sym->child->sec->status == CHANGED)
 				sym->status = CHANGED;
@@ -1232,6 +1244,8 @@ static void kpatch_correlate_elfs(struct kpatch_elf *kelf1, struct kpatch_elf *k
 	kpatch_correlate_symbols(&kelf1->symbols, &kelf2->symbols);
 }
 
+
+/*@kelf指向patched elf*/
 static void kpatch_compare_correlated_elements(struct kpatch_elf *kelf)
 {
 	/* lists are already correlated at this point */
@@ -1468,6 +1482,7 @@ static void kpatch_include_section(struct section *sec)
 	if (!sec->rela)
 		return;
 	sec->rela->include = 1;
+	/*@sec中引用了很多符号比如A B C 那么需要把A B C 这三个符号引入进来*/
 	list_for_each_entry(rela, &sec->rela->relas, list)
 		kpatch_include_symbol(rela->sym);
 }
@@ -1489,10 +1504,14 @@ static void kpatch_include_symbol(struct symbol *sym)
 	sym->include = 1;
 
 	/*
+	 * 对于一个函数或者object,只有当这个section变化时我们才需要变动把它包含进来.
+	 * 因为内存中已经存在一个一样的,只要重定位到这个已经驻留在内存的函数就可以了
 	 * For a function/object symbol, if it has a section, we only need to
 	 * include the section if it has changed.  Otherwise the symbol will be
 	 * used by relas/dynrelas to link to the real symbol externally.
 	 *
+	 * 但是如果时section symbol, 得把他们引入进来, 因为内存中没有一个相同的副本,
+	 * 比如 .text.A 这个symbol, 就必须得包含进来
 	 * For section symbols, we always include the section because
 	 * references to them can't otherwise be resolved externally.
 	 */
@@ -2532,6 +2551,10 @@ static struct sym_compare_type *kpatch_elf_locals(struct kpatch_elf *kelf)
 	return sym_array;
 }
 
+/*
+ * 实验中objname = xfs
+ * @kelf = elf_out
+ */
 static void kpatch_create_patches_sections(struct kpatch_elf *kelf,
 					   struct lookup_table *table,
 					   char *objname)
@@ -2555,6 +2578,7 @@ static void kpatch_create_patches_sections(struct kpatch_elf *kelf,
 	funcs = sec->data->d_buf;
 
 	/* lookup strings symbol */
+	/*变动的函数名以及所属的object name*/
 	strsym = find_symbol_by_name(&kelf->symbols, ".kpatch.strings");
 	if (!strsym)
 		ERROR("can't find .kpatch.strings symbol");
@@ -2564,6 +2588,7 @@ static void kpatch_create_patches_sections(struct kpatch_elf *kelf,
 
 	/* populate sections */
 	index = 0;
+	/*.kpatch.funcs中存在的都是一个个kpatch_patch_func结构体*/
 	list_for_each_entry(sym, &kelf->symbols, list) {
 		if (sym->type == STT_FUNC && sym->status == CHANGED && !sym->parent) {
 			if (sym->bind == STB_LOCAL) {
@@ -2694,6 +2719,7 @@ static int may_need_dynrela(const struct rela *rela)
 	    rela->type == R_PPC64_REL64)
 		return 0;
 
+	/*外部符号*/
 	if (!rela->sym->sec)
 		return 1;
 
@@ -2715,6 +2741,14 @@ static int may_need_dynrela(const struct rela *rela)
 		!strchr(toc_rela(rela)->sym->name, '.'));
 }
 
+/*
+ * @objname: vmlinux 或者 xfs (指xfs.ko)
+ * @pmod_name: patch name 0001-patch-xxxxx
+ 
+ * 创建dynrela section, 
+ * dynrela section用来解决有些符号不存在的情况下,可以插入hotpatch,待这些符号出现时,触发重定位
+ * 如果有些rela 的符号肯定已经在内存中了,那么就不需要放到这个段中了
+ */
 static void kpatch_create_intermediate_sections(struct kpatch_elf *kelf,
 						struct lookup_table *table,
 						char *objname,
@@ -2768,6 +2802,7 @@ static void kpatch_create_intermediate_sections(struct kpatch_elf *kelf,
 	krelas = krela_sec->data->d_buf;
 
 	/* create .kpatch.symbols text/rela section pair */
+	/*ksym_sec 对应 .kpatch.symbols*/
 	ksym_sec = create_section_pair(kelf, ".kpatch.symbols", sizeof(*ksyms), nr);
 	ksyms = ksym_sec->data->d_buf;
 
@@ -2787,6 +2822,7 @@ static void kpatch_create_intermediate_sections(struct kpatch_elf *kelf,
 	/* populate sections */
 	index = 0;
 	list_for_each_entry(sec, &kelf->sections, list) {
+		/*遍历所有的rela 段, 除过下面两个*/
 		if (!is_rela_section(sec))
 			continue;
 		if (!strcmp(sec->name, ".rela.kpatch.funcs") ||
@@ -2837,6 +2873,7 @@ static void kpatch_create_intermediate_sections(struct kpatch_elf *kelf,
 			if (rela->type == R_PPC64_ENTRY)
 				continue;
 
+			/*static 变量*/
 			if (rela->sym->bind == STB_LOCAL) {
 				/* An unchanged local symbol */
 				ret = lookup_local_symbol(table,
@@ -2847,6 +2884,7 @@ static void kpatch_create_intermediate_sections(struct kpatch_elf *kelf,
 
 			}
 			else if (vmlinux) {
+				/*父亲obj 是vmlinux*/
 				/*
 				 * We have a patch to vmlinux which references
 				 * a global symbol.  Use a normal rela for
@@ -2881,10 +2919,12 @@ static void kpatch_create_intermediate_sections(struct kpatch_elf *kelf,
 				 * symbol is defined in another object in the
 				 * patch module.
 				 */
+				 /*没找到 就continue*/
 				if (lookup_global_symbol(table, rela->sym->name,
 							 &result))
 					continue;
 			} else {
+				/*父亲obj 应该是一个module*/
 				/*
 				 * We have a patch to a module which references
 				 * a global symbol.  Try to find the symbol in
@@ -2892,6 +2932,7 @@ static void kpatch_create_intermediate_sections(struct kpatch_elf *kelf,
 				 */
 				if (lookup_global_symbol(table, rela->sym->name,
 							 &result)) {
+					/*在父亲obj中没有找到这个符号*/
 					/*
 					 * Not there, see if the symbol is
 					 * exported, and set sym_objname to the
@@ -2900,6 +2941,7 @@ static void kpatch_create_intermediate_sections(struct kpatch_elf *kelf,
 					 * is provided by another .o in the
 					 * patch module.
 					 */
+					 /*再去找vmlinux中exported 的符号*/
 					sym_objname = lookup_exported_symbol_objname(table, rela->sym->name);
 					if (!sym_objname)
 						sym_objname = pmod_name;
@@ -2911,6 +2953,8 @@ static void kpatch_create_intermediate_sections(struct kpatch_elf *kelf,
 					 * For a symbol exported by a module,
 					 * convert to a dynrela because the
 					 * module might not be loaded yet.
+					 *
+					 * 在有些符号不存在的情况下,可以插入hotpatch, dynrela 用来在这些符号出现时, 触发重定位
 					 */
 					if (!strcmp(sym_objname, "vmlinux"))
 						continue;
@@ -2956,7 +3000,10 @@ static void kpatch_create_intermediate_sections(struct kpatch_elf *kelf,
 			krelas[index].external = external;
 
 			/* add rela to fill in krelas[index].dest field */
+			/*对kpatch_relocation 数组中的每一项的dest 进行填充*/
 			ALLOC_LINK(rela2, &krela_sec->rela->relas);
+
+			/*sec 为当前正在遍历的 rela 段, rela2->sym 指向被重定位section的section symbole*/
 			if (sec->base->secsym)
 				rela2->sym = sec->base->secsym;
 			else
@@ -2965,6 +3012,7 @@ static void kpatch_create_intermediate_sections(struct kpatch_elf *kelf,
 
 			rela2->type = ABSOLUTE_RELA_TYPE;
 			rela2->addend = rela->offset;
+			/*dest 经过重定位之后表示P的在内存中的地址*/
 			rela2->offset = index * sizeof(*krelas) + \
 					offsetof(struct kpatch_relocation, dest);
 
@@ -2985,6 +3033,11 @@ static void kpatch_create_intermediate_sections(struct kpatch_elf *kelf,
 				offsetof(struct kpatch_relocation, ksym);
 
 			/*
+			 * 
+			 * 如果rela->sym->sec 说明sym所属的段时空, 也就是说这个段不在本obj中, 
+			 * 所以这个rela所涉及的符号肯定是外部的, 另外程序能走到这里说明这个rela定位的symbol
+			 * 肯定不是exported symbol, 所以内核肯定不会帮你做连接的, 那么就需要我们自己动手了
+			 * 
 			 * Mark the referred to symbol for removal but
 			 * only if it is not from this object file.
 			 * The symbols from this object file may be needed
@@ -3155,6 +3208,7 @@ static void kpatch_strip_unneeded_syms(struct kpatch_elf *kelf,
 	}
 }
 
+/*一个section 也对应一个symbol*/
 static void kpatch_create_strings_elements(struct kpatch_elf *kelf)
 {
 	struct section *sec;
@@ -3260,6 +3314,7 @@ static error_t parse_opt (int key, char *arg, struct argp_state *state)
 
 static struct argp argp = { options, parse_opt, args_doc, NULL };
 
+/*针对一个源文件的patch前后的obj文件, 生成他们的diff obj文件, hint用来记录源文件名*/
 int main(int argc, char *argv[])
 {
 	struct kpatch_elf *kelf_base, *kelf_patched, *kelf_out;
@@ -3279,9 +3334,19 @@ int main(int argc, char *argv[])
 
 	elf_version(EV_CURRENT);
 
-	orig_obj      = arguments.args[0];
+	/*
+		ALT_STRUCT_SIZE=12 FIXUP_STRUCT_SIZE= BUG_STRUCT_SIZE=12 EX_STRUCT_SIZE=8 /data/kpatch-public/kpatch-build/create-diff-object \
+		orig/fs/xfs/xfs_inode.o \
+		patched/fs/xfs/xfs_inode.o \
+		xfs \
+		/data/hotpatch-result/tmp/module/fs/xfs/xfs.ko.symtab \
+		/data/hotpatch-result/src/Module.symvers \
+		kpatch_0001_xfs_hotpatch_test \
+		output/fs/xfs/xfs_inode.o
+	*/
+	orig_obj      = arguments.args[0]; /*orig/fs/xfs/xfs_inode.o*/
 	patched_obj   = arguments.args[1];
-	parent_name   = arguments.args[2];
+	parent_name   = arguments.args[2]; /*xfs*/
 	parent_symtab = arguments.args[3];
 	mod_symvers   = arguments.args[4];
 	patch_name    = arguments.args[5];
@@ -3312,7 +3377,7 @@ int main(int argc, char *argv[])
 		log_normal("WARNING: FILE symbol not found in base. Stripped object file or assembly source?\n");
 		return EXIT_STATUS_NO_CHANGE;
 	}
-
+	/*base_local记录所有STT_LOCAL(即C中的static)函数以及全局变量*/
 	base_locals = kpatch_elf_locals(kelf_base);
 
 	kpatch_mark_grouped_sections(kelf_patched);
@@ -3360,6 +3425,10 @@ int main(int argc, char *argv[])
 	}
 
 	/* this is destructive to kelf_patched */
+	/*
+	 * kelf_patched中被included 的symbol 和section 全部迁移到kelf_out
+	 * 涉及到的symbol都需要迁移
+	 */
 	kpatch_migrate_included_elements(kelf_patched, &kelf_out);
 
 	/*
@@ -3407,6 +3476,7 @@ int main(int argc, char *argv[])
 	list_for_each_entry(sec, &kelf_out->sections, list) {
 		if (!is_rela_section(sec))
 			continue;
+		/*SHT_RELA 段的 sh_link指向sym table index, sh_info 指向被重定位的section 的index*/
 		sec->sh.sh_link = symtab->index;
 		sec->sh.sh_info = sec->base->index;
 		kpatch_rebuild_rela_section_data(sec);

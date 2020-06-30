@@ -56,6 +56,7 @@ struct kpatch_dynrela {
 	unsigned long sympos;
 	const char *name;
 	int addend;
+	/*符号是属于vmlinux - 0 还是 module - 1*/
 	int external;
 	struct list_head list;
 };

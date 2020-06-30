@@ -68,6 +68,10 @@ static void create_dynamic_rela_sections(struct kpatch_elf *kelf, struct section
 					   offset + offsetof(struct kpatch_relocation, dest));
 		if (!rela)
 			ERROR("find_rela_by_offset");
+		/*
+		 * rela->sym 指向STT_SECTION类型的section
+		 * rela->sym + addend = P
+		 */
 		sym = rela->sym;
 		dest_offset = rela->addend;
 
@@ -93,13 +97,14 @@ static void create_dynamic_rela_sections(struct kpatch_elf *kelf, struct section
 		name_offset = rela->addend;
 
 		/* Fill in dynrela entry */
+		/*src + addend = S*/
 		dynrelas[index].src = ksym->src;
 		dynrelas[index].addend = krelas[index].addend;
 		dynrelas[index].type = krelas[index].type;
 		dynrelas[index].external = krelas[index].external;
 		dynrelas[index].sympos = ksym->pos;
 
-		/* dest */
+		/* dest = 重定位中的 P */
 		ALLOC_LINK(rela, &dynsec->rela->relas);
 		rela->sym = sym;
 		rela->type = ABSOLUTE_RELA_TYPE;

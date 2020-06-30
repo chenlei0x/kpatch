@@ -29,6 +29,7 @@ struct kpatch_patch_func {
 	unsigned long old_size;
 	unsigned long sympos;
 	char *name;
+	/*func 所属的obj,可能是一个ko或者vmlinux*/
 	char *objname;
 };
 

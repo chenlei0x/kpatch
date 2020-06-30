@@ -40,6 +40,13 @@
 #include "log.h"
 
 struct object_symbol {
+	/*
+	In relocatable files, st_value holds alignment constraints for a symbol whose section index is SHN_COMMON.
+	In relocatable files, st_value holds a section offset for a defined symbol. st_value is an offset from the beginning of the section that st_shndx identifies.
+	obj文件中, 
+	如果该符号属于SHN_COMMON section, 比如BSS段, value 为对齐限制
+	否则, value为段偏移
+	*/
 	unsigned long value;
 	unsigned long size;
 	char *name;
@@ -53,8 +60,17 @@ struct export_symbol {
 
 struct lookup_table {
 	int obj_nr, exp_nr;
+	/*父亲obj中符号表中的符号, 父亲可能是vmlinux也有可能是类似于xfs.ko的kernel module*/
 	struct object_symbol *obj_syms;
+	
+	/*Module.symvers 中的所有符号, Module.symvers包含了vmlinux及其module中的所有exported符号*/
 	struct export_symbol *exp_syms;
+
+	/*
+	 * obj_syms包含了最终obj文件中的每个源文件的符号, 详见lookup_open, create-diff-object用来比对
+	 * 同一个源文件打patch前后的elf object文件, 而文件名也是一个symbol, 
+	 * 该字段用来记录该源文件
+	 */
 	struct object_symbol *local_syms;
 };
 
@@ -288,6 +304,8 @@ static void symtab_read(struct lookup_table *table, char *path)
  * All we care about is Symbol and Module.  Since the format is unpredictable,
  * we have to dynamically determine which column is Module by looking for
  * "vmlinux".
+ *
+ * Module.symvers里面包含了vmlinux及其kernel module中所有exported的符号
  */
 static void symvers_read(struct lookup_table *table, char *path)
 {
@@ -360,6 +378,23 @@ struct lookup_table *lookup_open(char *symtab_path, char *symvers_path,
 		ERROR("malloc table");
 	memset(table, 0, sizeof(*table));
 
+	/*
+	 * xfs.ko中的符号表
+	 * 这个符号表中包含了多个源文件的符号, 同属于同一个文件的符号会聚集在一起, 
+	 * 打头的是该文件的STT_FILE符号, 例如:
+	 *
+	 * 以下全是 xfs.mod.c中的符号
+	 * 0000000000000000     0 FILE    LOCAL  DEFAULT  ABS xfs.mod.c 
+	 * 
+	 * 0000000000000086    35 OBJECT  LOCAL  DEFAULT 4935 __UNIQUE_ID_srcversion14
+	 * 0000000000000000    24 OBJECT  LOCAL  DEFAULT    2 _note_6
+	 *
+	 * 以下全是xfs_trace.c中的符号
+	 * 0000000000000000     0 FILE    LOCAL  DEFAULT  ABS xfs_trace.c
+	 * 
+	 * 0000000000000000     8 FUNC    LOCAL  DEFAULT    5 __my_cpu_offse
+	 * 0000000000000000     8 FUNC    LOCAL  DEFAULT    4 __fswab64
+	 */
 	symtab_read(table, symtab_path);
 	symvers_read(table, symvers_path);
 	find_local_syms(table, hint, locals);
@@ -385,6 +420,7 @@ int lookup_local_symbol(struct lookup_table *table, char *name,
 		return 1;
 
 	memset(result, 0, sizeof(*result));
+	/*从obj_syms中搜索, 其中包含了父亲obj的sym table*/
 	for_each_obj_symbol(i, sym, table) {
 		if (sym->bind == STB_LOCAL && !strcmp(sym->name, name))
 			pos++;
@@ -415,6 +451,7 @@ int lookup_local_symbol(struct lookup_table *table, char *name,
 	return 0;
 }
 
+/*从父亲obj 的符号表中查询 STB_GLOBAL 的符号*/
 int lookup_global_symbol(struct lookup_table *table, char *name,
                          struct lookup_result *result)
 {

@@ -25,6 +25,7 @@
 /* For .kpatch.{symbols,relocations,arch} sections */
 
 struct kpatch_symbol {
+	/*如果该symbol 属于vmlinux, 那么src 表示该符号的地址, 否则 为0*/
 	unsigned long src;
 	unsigned long pos;
 	unsigned char bind, type;
@@ -33,8 +34,11 @@ struct kpatch_symbol {
 };
 
 struct kpatch_relocation {
+	/*相当于重定位中的P*/
 	unsigned long dest;
+	/*rela->type*/
 	unsigned int type;
+	/*rela->addend;*/
 	int addend;
 	int external;
 	char *objname; /* object to which this rela applies to */

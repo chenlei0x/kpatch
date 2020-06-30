@@ -54,11 +54,16 @@ enum status {
 
 struct section {
 	struct list_head list;
+	/*
+	 * origin elf 和 patched elf中两个名字相同的段互为twin
+	 * 比如.text.func
+	 */
 	struct section *twin;
 	GElf_Shdr sh;
 	Elf_Data *data;
 	char *name;
 	unsigned int index;
+	/*互为twin的两个section, status初始化为SAME*/
 	enum status status;
 	int include;
 	int ignore;
@@ -69,7 +74,19 @@ struct section {
 			struct list_head relas;
 		};
 		struct { /* else */
+			/*我不是一个rela section, @rela指向 本段的rela section*/
 			struct section *rela;
+			/*
+			 * 每个section 都有一个symbol与之对应,比如 .text section, 其在符号表里面就对应着符号 ".text", 符号类型为STT_SECTION
+			 * secsym 就记录着这个符号
+			 *
+			 * 当我们用-ffunction-sections and -fdata-sections 编译时,
+			 * 每个symbol 几乎都被编译成一个段, 那么这时候一个段和一个symbol是对应的
+			 * @sym 表示的就是这个symbol
+			 *
+			 * 这两个是不一样的, 比如A函数, 被编译之后会形成".text.A" section, 
+			 * 此时 @secsym = ".text.A"  @sym = "A"
+			 */
 			struct symbol *secsym, *sym;
 		};
 	};
@@ -77,9 +94,25 @@ struct section {
 
 struct symbol {
 	struct list_head list;
+	/*origin elf 和 patched elf 中名字相同,且类型相同的符号互为twin*/
 	struct symbol *twin;
+
+	/*
+	 * parent 和 child 两个字段用来解决一个函数可能被编译到两个段中.
+	 * 因为gcc可能会把一个函数的unlikely代码编译到cold段中
+	 */
 	struct symbol *parent;
 	struct symbol *child;
+	/*这个symbol属于哪个sec, sec存在 该symbol 在symtab中的表示为, 其中Ndx表示属于哪个section
+	Num:    Value          Size Type    Bind   Vis      Ndx Name
+	  8: 0000000000000000     0 SECTION LOCAL  DEFAULT    5
+	 10: 0000000000000000    15 FUNC    GLOBAL DEFAULT    1 test
+
+	 如果sec不存在,则为这样:
+	 11: 0000000000000000     0 NOTYPE  GLOBAL DEFAULT  UND b
+
+	 所以@sec为空表示 这个symbol是外链
+	*/
 	struct section *sec;
 	GElf_Sym sym;
 	char *name;
@@ -96,6 +129,7 @@ struct symbol {
 struct rela {
 	struct list_head list;
 	GElf_Rela rela;
+	/*重定位中的S*/
 	struct symbol *sym;
 	unsigned int type;
 	int addend;
