@@ -2829,6 +2829,13 @@ static void kpatch_create_intermediate_sections(struct kpatch_elf *kelf,
 		    !strcmp(sec->name, ".rela.kpatch.dynrelas"))
 			continue;
 		list_for_each_entry_safe(rela, safe, &sec->relas, list) {
+			/*
+			 * 如果一个rela项, 他引用的symbol 也在该obj中,且被include 进来(kpatch_include_section), 
+			 * 那么他就不需要通过kpatch机制在二次重定位中重定位, 那么need_dynrela 就为false, 
+			 * 但是如果一个rela 引用的symbol不在该obj中, 或者没有被include 进来, 那只能说明这个符号以前就是
+			 * 一个local的, 比如热补丁函数引用了static函数, 而static函数并没有发生改变,这时候就不会被include进来
+			 * 或者static 变量
+			 */
 			if (!rela->need_dynrela)
 				continue;
 
